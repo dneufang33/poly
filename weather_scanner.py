@@ -141,7 +141,7 @@ def fetch_temperature_forecast(lat, lon, date_str):
         "start_date":      date_str,
         "end_date":        date_str,
         "timezone":        "UTC",
-        "forecast_days":   16,
+      
     }
     try:
         r = requests.get(f"{OPEN_METEO_BASE}/forecast", params=params, timeout=15)
