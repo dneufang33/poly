@@ -60,6 +60,7 @@ SOCCER_MIN_KICKOFF    = 30      # minutes before kickoff
 # Weather filters
 WEATHER_MAX_VOLUME    = 50_000
 WEATHER_MIN_EDGE      = 0.06    # 6% — slightly higher bar given model uncertainty
+WEATHER_MAX_EDGE      = 0.50    # >50% edge almost always means inverted Polymarket prices
 
 
 def kelly_bet(edge, market_prob):
@@ -280,19 +281,21 @@ def run_weather_scanner(dry_run=False):
     opps = scan_weather_markets(
         weather_markets,
         min_edge=WEATHER_MIN_EDGE,
+        max_edge=WEATHER_MAX_EDGE,
         max_volume=WEATHER_MAX_VOLUME
     )
 
     if opps:
         print(f"\n  {'Edge':>6}  {'Bet':>6}  {'Poly%':>6}  {'Mdl%':>6}  "
-              f"{'Days':>5}  {'Fcst°C':>7}  Market")
-        print(f"  {'-'*75}")
+              f"{'Days':>5}  {'Fcst°C':>7}  {'Thresh':>7}  Market")
+        print(f"  {'-'*85}")
         for o in opps[:8]:
             bet = kelly_bet(o["edge"], o["market_prob"])
             o["bet_size"] = bet
             print(f"  {o['edge']*100:>5.1f}%  €{bet:>5.2f}  "
                   f"{o['poly_prob']*100:>5.1f}%  {o['model_prob']*100:>5.1f}%  "
                   f"{o['days_out']:>5}  {o['forecast_max_c']:>6.1f}°  "
+                  f"{o.get('threshold_c', o['threshold']):>6.1f}°  "
                   f"{o['question'][:40]}")
     else:
         print("  No weather opportunities found.")
