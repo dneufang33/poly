@@ -59,8 +59,11 @@ SOCCER_MIN_KICKOFF    = 30      # minutes before kickoff
 
 # Weather filters
 WEATHER_MAX_VOLUME    = 50_000
-WEATHER_MIN_EDGE      = 0.06    # 6% — slightly higher bar given model uncertainty
-WEATHER_MAX_EDGE      = 0.50    # >50% edge almost always means inverted Polymarket prices
+WEATHER_MIN_EDGE      = 0.06    # both sources must independently show ≥6% edge
+WEATHER_MAX_EDGE      = 0.50    # >50% = almost certainly inverted Polymarket prices
+WEATHER_MIN_HOURS     = 6       # don't trade within 6h of resolution
+WEATHER_MAX_HOURS     = 30      # don't trade more than 30h out
+WEATHER_AGREE_C       = 2.0     # max °C spread between primary & secondary forecast
 
 
 def kelly_bet(edge, market_prob):
@@ -267,8 +270,8 @@ def run_soccer_scanner(dry_run=False):
 # ── Weather scanner ───────────────────────────────────────────────────────────
 
 def run_weather_scanner(dry_run=False):
-    """Run the Open-Meteo vs Polymarket weather strategy."""
-    print("\n── Weather: Open-Meteo vs Polymarket ────────────────────────")
+    """Run the dual-source weather strategy."""
+    print("\n── Weather: Open-Meteo + NWS/MET Norway vs Polymarket ──────")
 
     events          = fetch_weather_events(limit=200)
     weather_markets = parse_weather_markets(events)
@@ -280,23 +283,29 @@ def run_weather_scanner(dry_run=False):
 
     opps = scan_weather_markets(
         weather_markets,
-        min_edge=WEATHER_MIN_EDGE,
-        max_edge=WEATHER_MAX_EDGE,
-        max_volume=WEATHER_MAX_VOLUME
+        min_edge           = WEATHER_MIN_EDGE,
+        max_edge           = WEATHER_MAX_EDGE,
+        max_volume         = WEATHER_MAX_VOLUME,
+        min_hours_to_close = WEATHER_MIN_HOURS,
+        max_hours_to_close = WEATHER_MAX_HOURS,
+        model_agreement_c  = WEATHER_AGREE_C,
     )
 
     if opps:
-        print(f"\n  {'Edge':>6}  {'Bet':>6}  {'Poly%':>6}  {'Mdl%':>6}  "
-              f"{'Days':>5}  {'Fcst°C':>7}  {'Thresh':>7}  Market")
+        print(f"\n  {'Edge':>6}  {'Bet':>6}  {'Poly%':>5}  {'Mdl%':>5}  "
+              f"{'Hrs':>5}  {'Src1°':>6}  {'Src2°':>6}  {'σ':>4}  Market")
         print(f"  {'-'*85}")
         for o in opps[:8]:
             bet = kelly_bet(o["edge"], o["market_prob"])
             o["bet_size"] = bet
+            src2 = o.get("secondary_source","?").replace("Open-Meteo GFS","GFS")
             print(f"  {o['edge']*100:>5.1f}%  €{bet:>5.2f}  "
-                  f"{o['poly_prob']*100:>5.1f}%  {o['model_prob']*100:>5.1f}%  "
-                  f"{o['days_out']:>5}  {o['forecast_max_c']:>6.1f}°  "
-                  f"{o.get('threshold_c', o['threshold']):>6.1f}°  "
-                  f"{o['question'][:40]}")
+                  f"{o['poly_prob']*100:>4.1f}%  {o['model_prob']*100:>4.1f}%  "
+                  f"{o['hours_until_close']:>5.1f}  "
+                  f"{o['forecast_primary_c']:>5.1f}°  "
+                  f"{o['forecast_secondary_c']:>5.1f}°  "
+                  f"{o['sigma_c']:>4.1f}  "
+                  f"[{src2}] {o['question'][:30]}")
     else:
         print("  No weather opportunities found.")
 
@@ -316,13 +325,16 @@ def run_weather_scanner(dry_run=False):
             "condition_id": o["market"]["condition_id"],
             "url":          o["market"]["url"],
             "extra": {
-                "city":           o["city"],
-                "threshold_c":    o["threshold"],
-                "direction":      o["direction"],
-                "date":           o["date"],
-                "days_out":       o["days_out"],
-                "forecast_max_c": o["forecast_max_c"],
-                "model_prob_raw": o["model_prob"],
+                "city":               o["city"],
+                "threshold_c":        o["threshold"],
+                "market_type":        o["market_type"],
+                "date":               o["date"],
+                "hours_until_close":  o["hours_until_close"],
+                "forecast_primary_c": o["forecast_primary_c"],
+                "forecast_secondary_c": o["forecast_secondary_c"],
+                "secondary_source":   o["secondary_source"],
+                "sigma_c":            o["sigma_c"],
+                "model_prob_raw":     o["model_prob"],
             },
         })
 
