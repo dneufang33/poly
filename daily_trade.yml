@@ -1,0 +1,23 @@
+name: Daily Prediction Market Scan (Disabled)
+
+# Elo-based pipeline disabled — using Pinnacle sharp scanner instead
+# To re-enable, restore the schedule trigger below
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+jobs:
+  disabled:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Disabled
+        run: echo "Elo pipeline disabled — using sharp_scan.yml instead"

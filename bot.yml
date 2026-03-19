@@ -1,0 +1,56 @@
+name: Prediction Market Bot
+
+on:
+  schedule:
+    # Every 5 minutes between 10:00-23:00 UTC
+    # Covers European football + US markets
+    - cron: '*/5 10-23 * * *'
+
+  # Manual trigger from Actions tab
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run — show opportunities but do not log trades'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+jobs:
+  run_bot:
+    runs-on: ubuntu-latest
+    environment: sports          # your GitHub environment with secrets
+    permissions:
+      contents: write            # needed to commit trades.json back
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run bot
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+        run: |
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            python run_bot.py --dry-run
+          else
+            python run_bot.py
+          fi
+
+      - name: Commit updated trades
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Actions"
+          git add trades.json market_state.json
+          git diff --staged --quiet || git commit -m "Bot run: $(date -u '+%Y-%m-%d %H:%M UTC')"
+          git push
