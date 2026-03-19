@@ -24,6 +24,11 @@ import math
 
 OPEN_METEO_BASE = "https://api.open-meteo.com/v1"
 
+# Per-run cache: avoids re-fetching the same (city, date) combination.
+# With 1000+ markets, the same location/date is requested dozens of times.
+_forecast_cache: dict = {}
+_session = requests.Session()
+
 # Known city coordinates for location matching
 CITY_COORDS = {
     "london":        (51.5074, -0.1278),
@@ -133,25 +138,33 @@ def fetch_temperature_forecast(lat, lon, date_str):
     """
     Fetch hourly temperature forecast from Open-Meteo for a specific date.
     Returns list of hourly temperatures (Celsius) for that day.
+    Results are cached per (lat, lon, date) to avoid duplicate API calls
+    when multiple markets cover the same city and date.
     """
+    cache_key = (round(lat, 3), round(lon, 3), date_str)
+    if cache_key in _forecast_cache:
+        return _forecast_cache[cache_key]
+
     params = {
-        "latitude":        lat,
-        "longitude":       lon,
-        "hourly":          "temperature_2m",
-        "start_date":      date_str,
-        "end_date":        date_str,
-        "timezone":        "UTC",
-      
+        "latitude":   lat,
+        "longitude":  lon,
+        "hourly":     "temperature_2m",
+        "start_date": date_str,
+        "end_date":   date_str,
+        "timezone":   "UTC",
     }
     try:
-        r = requests.get(f"{OPEN_METEO_BASE}/forecast", params=params, timeout=15)
+        r = _session.get(f"{OPEN_METEO_BASE}/forecast", params=params, timeout=15)
         r.raise_for_status()
         data = r.json()
         temps = data.get("hourly", {}).get("temperature_2m", [])
-        return [t for t in temps if t is not None]
+        result = [t for t in temps if t is not None]
     except Exception as e:
         print(f"  Open-Meteo error: {e}")
-        return []
+        result = []
+
+    _forecast_cache[cache_key] = result
+    return result
 
 
 def fetch_ensemble_forecast(lat, lon, date_str):
@@ -227,12 +240,18 @@ def estimate_probability(forecast_temps, threshold, direction, date_str):
     return round(max(0.02, min(0.98, prob)), 4)
 
 
-def scan_weather_markets(weather_markets, min_edge=0.06, max_volume=50_000):
+def scan_weather_markets(weather_markets, min_edge=0.06, max_edge=0.50, max_volume=50_000):
     """
     Main scanner: compare Open-Meteo forecast probabilities to Polymarket prices.
-    Returns list of opportunities with edge > min_edge.
+    Returns list of opportunities with min_edge < edge < max_edge.
+
+    max_edge caps out suspiciously large edges that almost always indicate
+    corrupted Polymarket data (inverted YES/NO prices) rather than genuine
+    mispricings. The soccer scanner uses the same guard (40%). 0.50 is generous
+    for weather — any real weather edge above 50% is extraordinary.
     """
     opportunities = []
+    suspicious    = 0
 
     for market in weather_markets:
         vol = float(market.get("volume", 0) or 0)
@@ -292,6 +311,12 @@ def scan_weather_markets(weather_markets, min_edge=0.06, max_volume=50_000):
             market_prob = poly_prob
             model_prob_for_trade = model_prob
 
+        # Guard: edges above max_edge almost always mean corrupted Polymarket data
+        # (e.g. YES/NO prices are inverted in the API response), not real opportunity.
+        if edge > max_edge:
+            suspicious += 1
+            continue
+
         forecast_max = max(temps)
         opportunities.append({
             "question":    question,
@@ -307,8 +332,13 @@ def scan_weather_markets(weather_markets, min_edge=0.06, max_volume=50_000):
             "market_prob": round(market_prob, 4),
             "model_prob_for_trade": round(model_prob_for_trade, 4),
             "forecast_max_c": round(forecast_max, 1),
+            "threshold_c": round(threshold, 1),
             "volume":      vol,
             "market":      market,
         })
+
+    if suspicious:
+        print(f"  ⚠ Skipped {suspicious} markets with edge >{ max_edge*100:.0f}% "
+              f"(likely inverted YES/NO prices in Polymarket data)")
 
     return sorted(opportunities, key=lambda x: x["edge"], reverse=True)
