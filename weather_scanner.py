@@ -341,4 +341,22 @@ def scan_weather_markets(weather_markets, min_edge=0.06, max_edge=0.50, max_volu
         print(f"  ⚠ Skipped {suspicious} markets with edge >{ max_edge*100:.0f}% "
               f"(likely inverted YES/NO prices in Polymarket data)")
 
-    return sorted(opportunities, key=lambda x: x["edge"], reverse=True)
+    # Deduplicate: a single Polymarket event often has multiple binary sub-markets
+    # for the same condition at different prices (different liquidity providers).
+    # e.g. "Singapore >31°C on Mar 30" appears at 3%, 6.5%, 11%, 16.5% — all the
+    # same underlying bet. Keep only the sub-market with the best edge (lowest
+    # poly_prob for YES bets, highest for NO bets), so we place at most one bet
+    # per unique (city, threshold, direction, date, outcome).
+    seen: dict = {}
+    for opp in opportunities:
+        key = (opp["city"], round(opp["threshold"], 1), opp["direction"],
+               opp["date"], opp["outcome"])
+        if key not in seen or opp["edge"] > seen[key]["edge"]:
+            seen[key] = opp
+
+    deduped = list(seen.values())
+    if len(deduped) < len(opportunities):
+        print(f"  ℹ Deduplicated {len(opportunities)} sub-markets → "
+              f"{len(deduped)} unique conditions")
+
+    return sorted(deduped, key=lambda x: x["edge"], reverse=True)
